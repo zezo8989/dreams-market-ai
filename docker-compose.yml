@@ -1,0 +1,87 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: dreams_market_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: dreammarket_admin
+      POSTGRES_DB: dreams_market
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dreams_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: dreams_market_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dreams_network
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dreams_market_backend
+    env_file: .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app/backend
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    environment:
+      DATABASE_URL: postgresql://postgres:dreammarket_admin@postgres:5432/dreams_market
+      REDIS_URL: redis://redis:6379/0
+      PYTHONUNBUFFERED: 1
+    networks:
+      - dreams_network
+    command: >
+      sh -c "
+      alembic upgrade head &&
+      uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+
+  nginx:
+    image: nginx:alpine
+    container_name: dreams_market_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend:/usr/share/nginx/html:ro
+    depends_on:
+      - backend
+    networks:
+      - dreams_network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  dreams_network:
+    driver: bridge
